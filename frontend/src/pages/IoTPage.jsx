@@ -1,24 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import StatusBadge from '../components/StatusBadge'
 import StatCard from '../components/StatCard'
-
-const MOCK_READINGS = [
-  { id: 1, device_id: 'machine-001', device_name: 'Pump Station A', temperature: 65, pressure: 70, vibration: 3.0, status: 'normal', timestamp: '2026-04-20T09:55:00' },
-  { id: 2, device_id: 'machine-002', device_name: 'Compressor B', temperature: 95, pressure: 98, vibration: 9.5, status: 'critical', timestamp: '2026-04-20T09:58:00' },
-  { id: 3, device_id: 'machine-003', device_name: 'Conveyor C', temperature: 80, pressure: 70, vibration: 3.0, status: 'warning', timestamp: '2026-04-20T09:50:00' },
-  { id: 4, device_id: 'machine-004', device_name: 'Boiler D', temperature: 60, pressure: 65, vibration: 2.0, status: 'normal', timestamp: '2026-04-20T09:45:00' },
-  { id: 5, device_id: 'machine-005', device_name: 'Turbine E', temperature: 78, pressure: 82, vibration: 5.5, status: 'warning', timestamp: '2026-04-20T09:40:00' },
-]
+import { LoadingSpinner, ErrorBanner } from '../components/PageState'
+import { iotApi } from '../api/iot'
 
 const TEMP_WARN = 75, TEMP_CRIT = 90
 const PRES_WARN = 80, PRES_CRIT = 95
-const VIB_WARN = 5, VIB_CRIT = 8
+const VIB_WARN = 5,  VIB_CRIT = 8
 
 function computeStatus(t, p, v) {
   if (t >= TEMP_CRIT || p >= PRES_CRIT || v >= VIB_CRIT) return 'critical'
   if (t >= TEMP_WARN || p >= PRES_WARN || v >= VIB_WARN) return 'warning'
   return 'normal'
+}
+
+function timeAgo(dateStr) {
+  const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000)
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
 }
 
 function SensorBar({ label, value, max, warn, crit }) {
@@ -37,18 +38,31 @@ function SensorBar({ label, value, max, warn, crit }) {
   )
 }
 
-function timeAgo(dateStr) {
-  const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000)
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
+const borderColor = { normal: 'border-green-300', warning: 'border-yellow-400', critical: 'border-red-400' }
 
 export default function IoTPage() {
-  const [readings, setReadings] = useState(MOCK_READINGS)
+  const [readings, setReadings] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [view, setView] = useState('card')
   const [showModal, setShowModal] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({ device_id: '', device_name: '', temperature: '', pressure: '', vibration: '' })
+
+  const fetchReadings = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await iotApi.list()
+      setReadings(res.data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchReadings() }, [fetchReadings])
 
   const counts = {
     devices: [...new Set(readings.map(r => r.device_id))].length,
@@ -57,23 +71,38 @@ export default function IoTPage() {
     critical: readings.filter(r => r.status === 'critical').length,
   }
 
-  function handleCreate(e) {
+  async function handleCreate(e) {
     e.preventDefault()
-    const t = parseFloat(form.temperature), p = parseFloat(form.pressure), v = parseFloat(form.vibration)
-    const status = computeStatus(t, p, v)
-    const newReading = { id: Date.now(), ...form, temperature: t, pressure: p, vibration: v, status, timestamp: new Date().toISOString() }
-    setReadings([newReading, ...readings])
-    setForm({ device_id: '', device_name: '', temperature: '', pressure: '', vibration: '' })
-    setShowModal(false)
-    toast.success(`Reading logged — Status: ${status}`)
+    setSubmitting(true)
+    try {
+      const payload = {
+        device_id: form.device_id,
+        device_name: form.device_name,
+        temperature: parseFloat(form.temperature),
+        pressure: parseFloat(form.pressure),
+        vibration: parseFloat(form.vibration),
+      }
+      const res = await iotApi.create(payload)
+      setReadings([res.data, ...readings])
+      setForm({ device_id: '', device_name: '', temperature: '', pressure: '', vibration: '' })
+      setShowModal(false)
+      toast.success(`Reading logged — Status: ${res.data.status}`)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  function handleDelete(id) {
-    setReadings(readings.filter(r => r.id !== id))
-    toast.success('Reading deleted')
+  async function handleDelete(id) {
+    try {
+      await iotApi.remove(id)
+      setReadings(readings.filter(r => r.id !== id))
+      toast.success('Reading deleted')
+    } catch (err) {
+      toast.error(err.message)
+    }
   }
-
-  const borderColor = { normal: 'border-green-300', warning: 'border-yellow-400', critical: 'border-red-400' }
 
   return (
     <div className="space-y-6">
@@ -84,11 +113,15 @@ export default function IoTPage() {
         <StatCard title="Critical" value={counts.critical} accent="bg-red-500" />
       </div>
 
+      {error && <ErrorBanner message={error} onRetry={fetchReadings} />}
+
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           {['card', 'table'].map(v => (
             <button key={v} onClick={() => setView(v)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${
+                view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}>
               {v === 'card' ? '🃏 Card View' : '📋 Table View'}
             </button>
           ))}
@@ -99,10 +132,11 @@ export default function IoTPage() {
         </button>
       </div>
 
-      {view === 'card' ? (
+      {loading ? <LoadingSpinner /> : view === 'card' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {readings.length === 0 && <p className="text-gray-400 col-span-3 text-center py-8">No readings yet. Log one above.</p>}
           {readings.map(r => (
-            <div key={r.id} className={`bg-white rounded-xl border-2 shadow-sm p-4 space-y-3 ${borderColor[r.status]}`}>
+            <div key={r.id} className={`bg-white rounded-xl border-2 shadow-sm p-4 space-y-3 ${borderColor[r.status] ?? 'border-gray-200'}`}>
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-semibold text-gray-900">{r.device_name}</p>
@@ -148,6 +182,9 @@ export default function IoTPage() {
                   </td>
                 </tr>
               ))}
+              {readings.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No readings yet</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -161,24 +198,27 @@ export default function IoTPage() {
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
             <form onSubmit={handleCreate} className="space-y-3">
-              {[['device_id', 'Device ID *', 'e.g. machine-006'], ['device_name', 'Device Name *', 'e.g. Pump Station F']].map(([field, label, ph]) => (
-                <div key={field}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-                  <input required value={form[field]} onChange={e => setForm({ ...form, [field]: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder={ph} />
+              {[['device_id','Device ID *','e.g. machine-006'],['device_name','Device Name *','e.g. Pump F']].map(([f,l,p])=>(
+                <div key={f}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{l}</label>
+                  <input required value={form[f]} onChange={e=>setForm({...form,[f]:e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder={p}/>
                 </div>
               ))}
-              {[['temperature', 'Temperature (°C) *', '0–120'], ['pressure', 'Pressure (Bar) *', '0–120'], ['vibration', 'Vibration (mm/s) *', '0–12']].map(([field, label, ph]) => (
-                <div key={field}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-                  <input required type="number" step="0.1" value={form[field]} onChange={e => setForm({ ...form, [field]: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder={ph} />
+              {[['temperature','Temperature (°C) *','0–120'],['pressure','Pressure (Bar) *','0–120'],['vibration','Vibration (mm/s) *','0–12']].map(([f,l,p])=>(
+                <div key={f}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{l}</label>
+                  <input required type="number" step="0.1" value={form[f]} onChange={e=>setForm({...form,[f]:e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder={p}/>
                 </div>
               ))}
               <p className="text-xs text-gray-400 italic">Status is computed automatically from sensor values.</p>
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Log Reading</button>
+                <button type="button" onClick={()=>setShowModal(false)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
+                <button type="submit" disabled={submitting}
+                  className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                  {submitting ? 'Logging...' : 'Log Reading'}
+                </button>
               </div>
             </form>
           </div>
