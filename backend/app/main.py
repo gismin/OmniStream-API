@@ -1,19 +1,19 @@
 """
 OmniStream-API — FastAPI application entry point.
-Registers all module routers and creates database tables on startup.
+Registers all routers, creates tables, and seeds default users on startup.
 """
 
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import engine, Base
-from app.routers import exec_router, iot_router, procurement_router
+from app.database import engine, Base, SessionLocal
+from app.routers import exec_router, iot_router, procurement_router, auth_router
 
-# Import models so SQLAlchemy registers them before create_all
 import app.models.exec_model          # noqa: F401
 import app.models.iot_model           # noqa: F401
 import app.models.procurement_model   # noqa: F401
+import app.models.user_model          # noqa: F401
 
 app = FastAPI(
     title="OmniStream-API",
@@ -27,8 +27,8 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
-allowed_origins = [origin.strip() for origin in allowed_origins_raw.split(",")]
+allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:3000")
+allowed_origins = [o.strip() for o in allowed_origins_raw.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +39,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(auth_router.router)
 app.include_router(exec_router.router)
 app.include_router(iot_router.router)
 app.include_router(procurement_router.router)
@@ -46,15 +47,38 @@ app.include_router(procurement_router.router)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
-def create_tables():
-    """Create all database tables if they don't exist yet."""
+def startup():
     Base.metadata.create_all(bind=engine)
+    _seed_users()
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
+def _seed_users():
+    """Create default users if they don't exist yet."""
+    from app.models.user_model import User, UserRole
+    from app.auth.jwt import hash_password
+
+    defaults = [
+        {"username": "admin",     "password": "admin123",     "role": UserRole.admin},
+        {"username": "operator",  "password": "operator123",  "role": UserRole.operator},
+        {"username": "executive", "password": "executive123", "role": UserRole.executive},
+    ]
+    db = SessionLocal()
+    try:
+        for u in defaults:
+            if not db.query(User).filter(User.username == u["username"]).first():
+                db.add(User(
+                    username=u["username"],
+                    hashed_password=hash_password(u["password"]),
+                    role=u["role"],
+                ))
+        db.commit()
+    finally:
+        db.close()
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health", tags=["System"])
 def health_check():
-    """Liveness probe — returns 200 when the service is running."""
     return {"status": "ok", "service": "OmniStream-API"}
 
 
@@ -64,5 +88,5 @@ def root():
         "service": "OmniStream-API",
         "version": "1.0.0",
         "docs": "/docs",
-        "modules": ["/exec", "/iot", "/procurement"],
+        "modules": ["/auth", "/exec", "/iot", "/procurement"],
     }

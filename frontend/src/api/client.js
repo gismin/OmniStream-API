@@ -5,7 +5,14 @@ const client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Global error interceptor — extracts FastAPI detail messages
+// Attach JWT token from localStorage to every request
+client.interceptors.request.use(config => {
+  const token = localStorage.getItem('access_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// Extract FastAPI detail messages from error responses
 client.interceptors.response.use(
   res => res,
   err => {

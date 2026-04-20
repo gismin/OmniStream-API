@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import toast from 'react-hot-toast'
 import StatusBadge from '../components/StatusBadge'
 import StatCard from '../components/StatCard'
@@ -8,12 +8,7 @@ import { iotApi } from '../api/iot'
 const TEMP_WARN = 75, TEMP_CRIT = 90
 const PRES_WARN = 80, PRES_CRIT = 95
 const VIB_WARN = 5,  VIB_CRIT = 8
-
-function computeStatus(t, p, v) {
-  if (t >= TEMP_CRIT || p >= PRES_CRIT || v >= VIB_CRIT) return 'critical'
-  if (t >= TEMP_WARN || p >= PRES_WARN || v >= VIB_WARN) return 'warning'
-  return 'normal'
-}
+const WS_URL = (import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000') + '/iot/ws'
 
 function timeAgo(dateStr) {
   const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000)
@@ -47,7 +42,9 @@ export default function IoTPage() {
   const [view, setView] = useState('card')
   const [showModal, setShowModal] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [wsStatus, setWsStatus] = useState('connecting')
   const [form, setForm] = useState({ device_id: '', device_name: '', temperature: '', pressure: '', vibration: '' })
+  const wsRef = useRef(null)
 
   const fetchReadings = useCallback(async () => {
     setLoading(true)
@@ -60,6 +57,40 @@ export default function IoTPage() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // WebSocket connection
+  useEffect(() => {
+    function connect() {
+      const ws = new WebSocket(WS_URL)
+      wsRef.current = ws
+
+      ws.onopen = () => setWsStatus('live')
+
+      ws.onmessage = (event) => {
+        const newReading = JSON.parse(event.data)
+        setReadings(prev => [newReading, ...prev])
+        if (newReading.status === 'critical') {
+          toast.error(`🔴 CRITICAL: ${newReading.device_name}`)
+        } else if (newReading.status === 'warning') {
+          toast(`⚠ Warning: ${newReading.device_name}`, { icon: '🟡' })
+        }
+      }
+
+      ws.onclose = () => {
+        setWsStatus('disconnected')
+        // Reconnect after 3 seconds
+        setTimeout(connect, 3000)
+      }
+
+      ws.onerror = () => {
+        setWsStatus('disconnected')
+        ws.close()
+      }
+    }
+
+    connect()
+    return () => wsRef.current?.close()
   }, [])
 
   useEffect(() => { fetchReadings() }, [fetchReadings])
@@ -75,18 +106,17 @@ export default function IoTPage() {
     e.preventDefault()
     setSubmitting(true)
     try {
-      const payload = {
+      await iotApi.create({
         device_id: form.device_id,
         device_name: form.device_name,
         temperature: parseFloat(form.temperature),
         pressure: parseFloat(form.pressure),
         vibration: parseFloat(form.vibration),
-      }
-      const res = await iotApi.create(payload)
-      setReadings([res.data, ...readings])
+      })
+      // WebSocket will push the new reading automatically
       setForm({ device_id: '', device_name: '', temperature: '', pressure: '', vibration: '' })
       setShowModal(false)
-      toast.success(`Reading logged — Status: ${res.data.status}`)
+      toast.success('Reading logged — updating via WebSocket...')
     } catch (err) {
       toast.error(err.message)
     } finally {
@@ -97,11 +127,17 @@ export default function IoTPage() {
   async function handleDelete(id) {
     try {
       await iotApi.remove(id)
-      setReadings(readings.filter(r => r.id !== id))
+      setReadings(prev => prev.filter(r => r.id !== id))
       toast.success('Reading deleted')
     } catch (err) {
       toast.error(err.message)
     }
+  }
+
+  const wsIndicator = {
+    live: <span className="flex items-center gap-1 text-xs text-green-600"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />Live</span>,
+    connecting: <span className="flex items-center gap-1 text-xs text-yellow-600"><span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />Connecting</span>,
+    disconnected: <span className="flex items-center gap-1 text-xs text-red-500"><span className="w-2 h-2 rounded-full bg-red-500" />Disconnected</span>,
   }
 
   return (
@@ -116,15 +152,18 @@ export default function IoTPage() {
       {error && <ErrorBanner message={error} onRetry={fetchReadings} />}
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          {['card', 'table'].map(v => (
-            <button key={v} onClick={() => setView(v)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${
-                view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}>
-              {v === 'card' ? '🃏 Card View' : '📋 Table View'}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <div className="flex gap-2">
+            {['card', 'table'].map(v => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-colors ${
+                  view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}>
+                {v === 'card' ? '🃏 Card View' : '📋 Table View'}
+              </button>
+            ))}
+          </div>
+          {wsIndicator[wsStatus]}
         </div>
         <button onClick={() => setShowModal(true)}
           className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
@@ -212,7 +251,7 @@ export default function IoTPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder={p}/>
                 </div>
               ))}
-              <p className="text-xs text-gray-400 italic">Status is computed automatically from sensor values.</p>
+              <p className="text-xs text-gray-400 italic">Status is computed automatically. New reading appears instantly via WebSocket.</p>
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={()=>setShowModal(false)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
                 <button type="submit" disabled={submitting}

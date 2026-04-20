@@ -1,15 +1,17 @@
 """
 Router for /iot — Machine Telemetry Monitor.
 Status is computed automatically from sensor thresholds on every ingest.
-WebSocket streaming is added in Phase 7.
+Phase 7: WebSocket endpoint broadcasts new readings to all connected clients.
 """
 
+import json
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.iot_model import IoTReading, IoTStatus
+from app.models.user_model import UserRole
 from app.schemas.iot_schema import (
     IoTReadingCreate,
     IoTReadingResponse,
@@ -17,9 +19,40 @@ from app.schemas.iot_schema import (
     PRESSURE_WARN, PRESSURE_CRIT,
     VIBRATION_WARN, VIBRATION_CRIT,
 )
+from app.dependencies.auth import get_current_user
+from app.dependencies.roles import require_role
 
 router = APIRouter(prefix="/iot", tags=["IoT Telemetry"])
 
+
+# ── WebSocket Connection Manager ──────────────────────────────────────────────
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: List[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        self.active.remove(ws)
+
+    async def broadcast(self, data: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_text(json.dumps(data))
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.active.remove(ws)
+
+
+manager = ConnectionManager()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _compute_status(temperature: float, pressure: float, vibration: float) -> IoTStatus:
     """Derive IoT status from the worst-case sensor reading."""
@@ -37,9 +70,29 @@ def _get_or_404(reading_id: int, db: Session) -> IoTReading:
     return reading
 
 
+# ── WebSocket ─────────────────────────────────────────────────────────────────
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket stream — broadcasts every new telemetry reading to all clients.
+    Connect with: ws://localhost:8000/iot/ws
+    """
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep connection alive, ignore client messages
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# ── REST Endpoints ────────────────────────────────────────────────────────────
+
 @router.get("/", response_model=List[IoTReadingResponse], summary="List all telemetry readings")
-def list_readings(db: Session = Depends(get_db)):
-    """Return all readings ordered by timestamp descending."""
+def list_readings(
+    db: Session = Depends(get_db),
+    _: object = Depends(get_current_user),
+):
     return db.query(IoTReading).order_by(IoTReading.timestamp.desc()).all()
 
 
@@ -49,12 +102,14 @@ def list_readings(db: Session = Depends(get_db)):
     status_code=status.HTTP_201_CREATED,
     summary="Ingest a telemetry reading",
 )
-def create_reading(payload: IoTReadingCreate, db: Session = Depends(get_db)):
+async def create_reading(
+    payload: IoTReadingCreate,
+    db: Session = Depends(get_db),
+    _: object = Depends(require_role(UserRole.admin, UserRole.operator)),
+):
     """
-    Ingest a new telemetry reading. Status is computed automatically:
-    - Normal: all sensors below warning thresholds
-    - Warning: at least one sensor at or above warning threshold
-    - Critical: at least one sensor at or above critical threshold
+    Ingest a new telemetry reading. Status computed automatically.
+    Broadcasts the new reading to all WebSocket clients.
     """
     computed_status = _compute_status(
         payload.temperature, payload.pressure, payload.vibration
@@ -63,11 +118,28 @@ def create_reading(payload: IoTReadingCreate, db: Session = Depends(get_db)):
     db.add(reading)
     db.commit()
     db.refresh(reading)
+
+    # Broadcast to all WebSocket clients
+    await manager.broadcast({
+        "id": reading.id,
+        "device_id": reading.device_id,
+        "device_name": reading.device_name,
+        "temperature": reading.temperature,
+        "pressure": reading.pressure,
+        "vibration": reading.vibration,
+        "status": reading.status.value,
+        "timestamp": reading.timestamp.isoformat(),
+    })
+
     return reading
 
 
 @router.get("/{reading_id}", response_model=IoTReadingResponse, summary="Get a single reading")
-def get_reading(reading_id: int, db: Session = Depends(get_db)):
+def get_reading(
+    reading_id: int,
+    db: Session = Depends(get_db),
+    _: object = Depends(get_current_user),
+):
     return _get_or_404(reading_id, db)
 
 
@@ -76,8 +148,11 @@ def get_reading(reading_id: int, db: Session = Depends(get_db)):
     response_model=List[IoTReadingResponse],
     summary="Get reading history for a device",
 )
-def get_device_history(device_id: str, db: Session = Depends(get_db)):
-    """Return all readings for a specific device, newest first."""
+def get_device_history(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: object = Depends(get_current_user),
+):
     readings = (
         db.query(IoTReading)
         .filter(IoTReading.device_id == device_id)
@@ -94,7 +169,11 @@ def get_device_history(device_id: str, db: Session = Depends(get_db)):
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a reading",
 )
-def delete_reading(reading_id: int, db: Session = Depends(get_db)):
+def delete_reading(
+    reading_id: int,
+    db: Session = Depends(get_db),
+    _: object = Depends(require_role(UserRole.admin)),
+):
     reading = _get_or_404(reading_id, db)
     db.delete(reading)
     db.commit()
