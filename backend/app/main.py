@@ -59,8 +59,8 @@ def _seed_users():
 
     defaults = [
         {"username": "admin",     "password": "admin123",     "role": UserRole.admin},
-        {"username": "operator",  "password": "operator123",  "role": UserRole.operator},
-        {"username": "executive", "password": "executive123", "role": UserRole.executive},
+        {"username": "operator",  "password": "operator123", "role": UserRole.operator},
+        {"username": "executive", "password": "executive123","role": UserRole.executive},
     ]
     db = SessionLocal()
     try:
