@@ -1,0 +1,283 @@
+# OmniStream-API — Full Development Guide (Claude-Driven)
+
+This document provides a complete, step-by-step workflow to build OmniStream-API using an AI-assisted approach. Each phase includes exact prompts to use, expected outputs, and goals.
+
+---
+
+# PHASE 0 — Project Understanding
+
+## Objective
+
+Understand system scope before generating code.
+
+## Your System
+
+ Backend FastAPI
+ Modules
+
+   exec → workflow tracking
+   iot → telemetry monitoring
+   procurement → CapEx system
+
+## Key Logic
+
+ Workflow Draft → Review → Approved
+ IoT Normal  Warning  Critical
+ Procurement CEO approval if cost  50,000
+
+---
+
+# PHASE 1 — Backend Generation
+
+## Objective
+
+Generate full backend structure.
+
+## Prompt
+
+
+Act as a senior backend engineer.
+
+Build a production-ready FastAPI project called OmniStream-API with
+
+Modules
+1. exec → strategic workflow tracking
+   - status Draft → Review → Approved
+
+2. iot → machine telemetry
+   - status Normal, Warning, Critical
+
+3. procurement → CapEx requests
+   - auto flag requires_ceo_signoff if cost  50000
+
+Requirements
+- Use FastAPI
+- Use SQLAlchemy ORM
+- Use SQLite
+- Use Pydantic schemas
+- Modular routers (separate files)
+- Clean folder structure
+- Include docstrings
+- Include example endpoints
+
+Also
+- Define database models clearly
+- Include relationships if needed
+- Provide full working code
+
+
+## Output
+
+ Project folder structure
+ API routes
+ Database models
+
+---
+
+# PHASE 2 — Architecture Understanding
+
+## Objective
+
+Understand generated system deeply.
+
+## Prompt
+
+
+Explain the architecture like I am a junior engineer.
+Show how data flows between modules.
+Explain each file's responsibility.
+
+
+## Output
+
+ Clear mental model
+ Data flow understanding
+
+---
+
+# PHASE 3 — API Testing
+
+## Objective
+
+Verify backend works.
+
+## Steps
+
+ Run server
+ Use docs (Swagger UI)
+ Test endpoints
+
+## Prompt (optional)
+
+
+Give me test cases for each API endpoint.
+
+
+---
+
+# PHASE 4 — UIUX Design
+
+## Objective
+
+Design frontend system.
+
+## Prompt
+
+
+Design a web dashboard for OmniStream-API.
+
+Include
+- Executive dashboard (workflow status)
+- IoT monitoring panel (real-time status)
+- Procurement approval panel
+
+Make it
+- clean
+- minimal
+- professional (industrial style)
+
+Provide
+1. layout structure
+2. component list
+3. user flow
+
+
+## Output
+
+ UI structure
+ Screen breakdown
+
+---
+
+# PHASE 5 — Frontend Development
+
+## Objective
+
+Convert UI into working frontend.
+
+## Prompt
+
+
+Convert this UI into a React dashboard using Tailwind CSS.
+Include
+- sidebar navigation
+- cards for metrics
+- tables for procurement
+- status color indicators
+
+
+## Output
+
+ React components
+ UI code
+
+---
+
+# PHASE 6 — Backend Integration
+
+## Objective
+
+Connect frontend to backend.
+
+## Prompt
+
+
+Show how to connect React frontend to FastAPI backend using REST API.
+Include example fetch or axios calls.
+
+
+## Output
+
+ API integration logic
+
+---
+
+# PHASE 7 — Advanced Features
+
+## Objective
+
+Upgrade system to production level.
+
+## Prompts
+
+### Real-time IoT
+
+
+Upgrade IoT module to support real-time updates using WebSockets.
+
+
+### Authentication
+
+
+Add JWT authentication system to FastAPI.
+
+
+### Role-Based Access
+
+
+Add role-based access control (admin, operator, executive).
+
+
+## Output
+
+ Scalable architecture
+ Production-ready features
+
+---
+
+# PHASE 8 — Deployment
+
+## Objective
+
+Make system usable in real world.
+
+## Prompt
+
+
+Provide deployment guide for FastAPI + React app.
+Include
+- Docker setup
+- Production server (GunicornUvicorn)
+- Environment variables
+
+
+## Output
+
+ Deployment instructions
+
+---
+
+# FINAL ARCHITECTURE
+
+Frontend (React)
+↓
+FastAPI Backend
+↓
+Database (SQLitePostgreSQL)
+
+---
+
+# STRATEGY NOTE
+
+Use iteration
+
+1. Generate
+2. Review
+3. Refine
+4. Expand
+
+Do NOT try to build everything in one prompt.
+
+---
+
+# RESULT
+
+If completed
+
+ Full-stack system
+ Portfolio-level project
+ Demonstrates engineering + system design capability
+
+---
+
+End of Guide
